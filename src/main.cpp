@@ -1,10 +1,13 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_ADS1015.h>
+#include <ArduinoJson.h>
 
-const char* ssid     = "xxxxx";
-const char* password = "xxxxx";
+const char *ssid = "xxxxx";
+const char *password = "xxxxx";
+const bool isCalibrated = false;
 
 #define OLED_RESET 12
 Adafruit_SSD1306 display(OLED_RESET);
@@ -13,24 +16,39 @@ Adafruit_SSD1306 display(OLED_RESET);
 #endif
 
 Adafruit_ADS1115 ads;
+ESP8266WebServer server(80);
 
 unsigned long lastMicros = 0, lastMillis = 0;
 double wattHourCumulative = 0, wattHourIncremental = 0;
 float v, i, multiplier;
 
 const int numReadings = 10;
-double readings[numReadings];      // the readings from the analog input
-int readIndex = 0;              // the index of the current reading
-double total = 0;                  // the running total
-double average = 0;                // the average
+double readings[numReadings]; // the readings from the analog input
+int readIndex = 0;            // the index of the current reading
+double total = 0;             // the running total
+double average = 0;           // the average
 
 void getCurrentAmps();
 void getVoltageVolts();
 double getWattHourIncremental();
 unsigned long elapsedTimeMicros();
 
-void setup() {
-  for (int thisReading = 0; thisReading < numReadings; thisReading++) {
+void handleRoot()
+{
+  StaticJsonDocument<200> jsonBuffer;
+  jsonBuffer["voltage"]=v;
+  jsonBuffer["current"]=i;
+  jsonBuffer["watts"]=v*i;
+  jsonBuffer["mWh"]=(int)wattHourCumulative;
+  String data;
+  serializeJson(jsonBuffer, data);
+  server.send(200, "text/json", data);
+}
+
+void setup()
+{
+  for (int thisReading = 0; thisReading < numReadings; thisReading++)
+  {
     readings[thisReading] = 0;
   }
   Serial.begin(115200);
@@ -52,7 +70,8 @@ void setup() {
 
   display.display();
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
     display.print(".");
     display.display();
@@ -64,10 +83,13 @@ void setup() {
   display.println(WiFi.localIP());
   display.display();
   delay(1000);
+  server.on("/", handleRoot);
+  server.begin();
 }
 
-void loop() {
-
+void loop()
+{
+    server.handleClient();
   double wattHourIncremental = getWattHourIncremental();
   wattHourCumulative += wattHourIncremental;
 
@@ -76,36 +98,51 @@ void loop() {
   display.setCursor(0, 0);
   getCurrentAmps();
   getVoltageVolts();
-  int mV = v * 1000;
-  display.print("V  ");
-  if (mV < 10000)
+  if (isCalibrated)
   {
-    display.print(" ");
+    int mV = v * 1000;
+    display.print("V  ");
+    if (mV < 10000)
+    {
+      display.print(" ");
+    }
+    display.println((float)mV / 1000, 3);
+    display.print("A   ");
+    display.println(i, 3);
+    display.print("W  ");
+    if ((v * i) < 10.0)
+    {
+      display.print(" ");
+    }
+    display.println(v * i, 3);
+    display.print("mWh ");
+    display.println(wattHourCumulative, 0);
+    display.display();
   }
-  display.println((float)mV / 1000, 3);
-  display.print("A   ");
-  display.println(i, 3);
-  display.print("W  ");
-  if ((v * i) < 10.0)
+  else
   {
-    display.print(" ");
+    display.println(i);
+    display.println(v);
+    display.display();
   }
-  display.println(v * i, 3);
-  display.print("mWh ");
-  display.println(wattHourCumulative, 0);
-  display.display();
+
   //delay(50);
 }
 
 void getCurrentAmps()
 {
   i = (double)ads.readADC_Differential_2_3();
-  //Calibraiton formulae i=;
+  if (isCalibrated)
+  {
+    //Calibraiton formulae i=;
+    i = i;
+  }
   total = total - readings[readIndex];
   readings[readIndex] = i;
   total = total + readings[readIndex];
   readIndex = readIndex + 1;
-  if (readIndex >= numReadings) {
+  if (readIndex >= numReadings)
+  {
     readIndex = 0;
   }
   average = total / numReadings;
@@ -115,7 +152,11 @@ void getCurrentAmps()
 void getVoltageVolts()
 {
   v = (double)ads.readADC_SingleEnded(0);
-  //Calibraiton formulae v=;
+  if (isCalibrated)
+  {
+    //Calibraiton formulae v=;
+    v = v;
+  }
 }
 
 double getWattHourIncremental()
@@ -129,5 +170,3 @@ unsigned long elapsedTimeMicros()
   lastMicros = micros();
   return lastMicros - tempmicros;
 }
-
-
